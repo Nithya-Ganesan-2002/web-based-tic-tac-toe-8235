@@ -33,6 +33,78 @@ function calculateWinner(squares) {
   return { winner: null, line: null };
 }
 
+/**
+ * Compute empty cell indices from board.
+ */
+function getAvailableMoves(squares) {
+  const moves = [];
+  for (let i = 0; i < squares.length; i += 1) {
+    if (!squares[i]) moves.push(i);
+  }
+  return moves;
+}
+
+/**
+ * Minimax algorithm for Tic Tac Toe.
+ * Returns the best move index for the given player ('X' or 'O').
+ * We treat 'X' as maximizing player, 'O' as minimizing player for stable results.
+ */
+function minimax(squares, player) {
+  const { winner } = calculateWinner(squares);
+  const isBoardFull = squares.every((s) => s !== null);
+
+  if (winner === 'X') return { score: 1 };
+  if (winner === 'O') return { score: -1 };
+  if (isBoardFull) return { score: 0 };
+
+  const maximizing = player === 'X';
+  let bestMove = null;
+
+  if (maximizing) {
+    let bestScore = -Infinity;
+    for (const move of getAvailableMoves(squares)) {
+      const next = [...squares];
+      next[move] = 'X';
+      const result = minimax(next, 'O');
+      if (result.score > bestScore) {
+        bestScore = result.score;
+        bestMove = move;
+      }
+    }
+    return { score: bestScore, move: bestMove };
+  } else {
+    let bestScore = Infinity;
+    for (const move of getAvailableMoves(squares)) {
+      const next = [...squares];
+      next[move] = 'O';
+      const result = minimax(next, 'X');
+      if (result.score < bestScore) {
+        bestScore = result.score;
+        bestMove = move;
+      }
+    }
+    return { score: bestScore, move: bestMove };
+  }
+}
+
+/**
+ * Get AI move index for given board and aiSymbol ('X'|'O').
+ * We run minimax from perspective of 'X' as maximizing, 'O' as minimizing.
+ * If aiSymbol is 'O', we request the move from minimizing player branch, and vice versa.
+ */
+function getBestAIMove(squares, aiSymbol) {
+  // If board is empty, prefer center for speed and quality
+  if (squares.every((s) => s === null)) return 4;
+  const result = minimax(squares, 'X'); // compute base tree once
+  if (aiSymbol === 'X') {
+    // result.move is best for X (maximizing)
+    return result.move ?? getAvailableMoves(squares)[0];
+  }
+  // For O, compute from minimizing perspective
+  const resO = minimax(squares, 'O');
+  return resO.move ?? getAvailableMoves(squares)[0];
+}
+
 // PUBLIC_INTERFACE
 function App() {
   /**
@@ -54,31 +126,39 @@ function App() {
    * Game state:
    * - squares: 9-element array of 'X' | 'O' | null
    * - xIsNext: boolean to track turns
-   * - status: derived text about game state
-   * - winnerInfo: memoized winner and line
+   * - mode: 'human' | 'ai' (human = 2 players; ai = vs computer)
+   * - aiPlays: 'X' | 'O' when in ai mode (defaults to 'O')
    */
   const [squares, setSquares] = useState(Array(9).fill(null));
   const [xIsNext, setXIsNext] = useState(true);
+  const [mode, setMode] = useState('ai'); // default to AI mode for demo
+  const [aiPlays, setAiPlays] = useState('O'); // AI plays as O by default
 
   const winnerInfo = useMemo(() => calculateWinner(squares), [squares]);
   const isBoardFull = useMemo(() => squares.every((s) => s !== null), [squares]);
   const isDraw = !winnerInfo.winner && isBoardFull;
 
   const currentPlayer = xIsNext ? 'X' : 'O';
+  const humanTurn = mode === 'human' || currentPlayer !== aiPlays;
 
   const statusText = winnerInfo.winner
     ? `Winner: ${winnerInfo.winner}`
     : isDraw
     ? 'Draw'
+    : mode === 'ai'
+    ? `Turn: ${currentPlayer} ${humanTurn ? '(You)' : '(AI)'}`
     : `Turn: ${currentPlayer}`;
 
   /**
    * Handle user clicking a cell.
    * - Ignore if game is finished or cell already filled
+   * - In AI mode, ignore clicks when it's AI's turn
    * - Otherwise fill with current player's symbol and toggle turn
    */
   const handleCellClick = (index) => {
     if (winnerInfo.winner || squares[index]) return;
+    if (mode === 'ai' && !humanTurn) return;
+
     setSquares((prev) => {
       const next = [...prev];
       next[index] = currentPlayer;
@@ -92,6 +172,66 @@ function App() {
     setSquares(Array(9).fill(null));
     setXIsNext(true);
   };
+
+  /**
+   * Automatically let the AI play when:
+   * - mode is 'ai'
+   * - no winner
+   * - board not full
+   * - it's AI's turn
+   */
+  useEffect(() => {
+    if (mode !== 'ai') return;
+    if (winnerInfo.winner || isDraw) return;
+    if (humanTurn) return;
+
+    // small timeout to feel natural and allow UI to update
+    const t = setTimeout(() => {
+      setSquares((prev) => {
+        const move = getBestAIMove(prev, aiPlays);
+        if (move === undefined || move === null || prev[move]) return prev;
+        const next = [...prev];
+        next[move] = aiPlays;
+        return next;
+      });
+      setXIsNext((prev) => !prev);
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [mode, winnerInfo.winner, isDraw, humanTurn, aiPlays, xIsNext, squares]);
+
+  /**
+   * Mode switching handlers: changing mode resets the game for clarity.
+   */
+  const handleModeChange = (e) => {
+    const nextMode = e.target.value;
+    setMode(nextMode);
+    resetGame();
+  };
+
+  const handleAiSideChange = (e) => {
+    const side = e.target.value; // 'X' or 'O'
+    setAiPlays(side);
+    resetGame();
+  };
+
+  // If AI is set to play first as 'X', trigger immediately on fresh board.
+  useEffect(() => {
+    if (mode !== 'ai') return;
+    const noMovesPlayed = squares.every((s) => s === null);
+    if (noMovesPlayed && aiPlays === 'X') {
+      const t = setTimeout(() => {
+        setSquares((prev) => {
+          const move = getBestAIMove(prev, 'X');
+          const next = [...prev];
+          next[move] = 'X';
+          return next;
+        });
+        setXIsNext(false); // O next
+      }, 150);
+      return () => clearTimeout(t);
+    }
+  }, [mode, aiPlays, squares]);
 
   return (
     <div className="App ttt-app">
@@ -123,7 +263,11 @@ function App() {
                   role="gridcell"
                   aria-label={`Cell ${idx + 1} ${value ? `with ${value}` : 'empty'}`}
                   onClick={() => handleCellClick(idx)}
-                  disabled={Boolean(winnerInfo.winner) || Boolean(value)}
+                  disabled={
+                    Boolean(winnerInfo.winner) ||
+                    Boolean(value) ||
+                    (mode === 'ai' && !humanTurn)
+                  }
                 >
                   <span className={`ttt-mark ${value ? 'visible' : ''}`}>
                     {value}
@@ -145,14 +289,48 @@ function App() {
             </button>
           </div>
 
+          <div className="ttt-actions" role="group" aria-label="Mode selection">
+            <label htmlFor="mode-select" style={{ fontWeight: 600 }}>Mode:</label>
+            <select
+              id="mode-select"
+              value={mode}
+              onChange={handleModeChange}
+              aria-label="Select game mode"
+              className="btn"
+            >
+              <option value="human">Human vs Human</option>
+              <option value="ai">Human vs AI</option>
+            </select>
+
+            {mode === 'ai' && (
+              <>
+                <label htmlFor="ai-side-select" style={{ fontWeight: 600 }}>AI Plays:</label>
+                <select
+                  id="ai-side-select"
+                  value={aiPlays}
+                  onChange={handleAiSideChange}
+                  aria-label="Select AI side"
+                  className="btn"
+                >
+                  <option value="X">X (first)</option>
+                  <option value="O">O (second)</option>
+                </select>
+              </>
+            )}
+          </div>
+
           <div className="ttt-legend">
             <div className="legend-item">
               <span className="legend-swatch legend-x">X</span>
-              <span className="legend-text">Player X</span>
+              <span className="legend-text">
+                {mode === 'ai' && aiPlays === 'X' ? 'AI' : 'Player X'}
+              </span>
             </div>
             <div className="legend-item">
               <span className="legend-swatch legend-o">O</span>
-              <span className="legend-text">Player O</span>
+              <span className="legend-text">
+                {mode === 'ai' && aiPlays === 'O' ? 'AI' : 'Player O'}
+              </span>
             </div>
           </div>
         </section>
